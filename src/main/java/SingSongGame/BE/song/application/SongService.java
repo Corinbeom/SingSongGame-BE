@@ -1,5 +1,6 @@
 package SingSongGame.BE.song.application;
 
+import SingSongGame.BE.in_game.application.SongCacheManager;
 import SingSongGame.BE.song.application.dto.request.SongVerifyRequest;
 import SingSongGame.BE.song.application.dto.response.SongResponse;
 import SingSongGame.BE.song.application.dto.response.SongVerifyResponse;
@@ -8,6 +9,7 @@ import SingSongGame.BE.song.persistence.SongRepository;
 import SingSongGame.BE.song.persistence.Tag;
 import SingSongGame.BE.song.persistence.TagRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -18,28 +20,33 @@ import java.util.Set;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class SongService {
 
     private final SongRepository songRepository;
     private final TagRepository tagRepository;
+    private final SongCacheManager songCacheManager;
 
     @Transactional
     public Song getRandomSong() {
         return getRandomSong(Collections.emptySet(), null);
     }
 
-    @Transactional
-    public Song getRandomSong(Set<Long> usedSongIds) {
-        return getRandomSong(usedSongIds, null);
-    }
-
-    @Transactional
+    @Transactional(readOnly = true)
     public Song getRandomSong(Set<Long> usedSongIds, String excludeArtist) {
-        // 모든 조건을 한 번에 처리하는 Repository 메서드 사용
+        // 1. 먼저 캐시에서 시도
+        Song cachedSong = songCacheManager.getRandomSongFromCache(usedSongIds, excludeArtist, null);
+
+        if (cachedSong != null) {
+            return cachedSong;
+        }
+
+        // 2. 캐시에서 못 찾으면 DB 조회 (fallback)
+        log.warn("⚠️ 캐시에서 노래를 찾지 못했습니다. DB 조회를 시도합니다.");
         List<Song> candidates = songRepository.findRandomCandidates(usedSongIds, excludeArtist);
 
         if (candidates.isEmpty()) {
-            return null; // 더 이상 출제할 노래가 없음
+            return null;
         }
 
         return candidates.get(new Random().nextInt(candidates.size()));
@@ -47,17 +54,21 @@ public class SongService {
 
     @Transactional(readOnly = true)
     public Song getRandomSongByTagNames(Set<String> keywordNames, Set<Long> usedSongIds, String excludeArtist) {
-        // ✅ 전체 선택이거나 아무 태그 없음 → 전체 랜덤 (tags와 함께 조회)
-        System.out.println("🎵 검색할 키워드들: " + keywordNames);
-        System.out.println("🎵 제외할 가수: " + excludeArtist);
+        // 1. 캐시 우선 시도
+        Song cachedSong = songCacheManager.getRandomSongFromCache(usedSongIds, excludeArtist, keywordNames);
+
+        if (cachedSong != null) {
+            return cachedSong;
+        }
+
+        // 2. DB fallback
+        log.warn("⚠️ 캐시에서 키워드 노래를 찾지 못했습니다. DB 조회를 시도합니다.");
 
         if (keywordNames == null || keywordNames.isEmpty() || keywordNames.contains("전체")) {
-            System.out.println("🎵 전체 랜덤 선택됨");
             List<Song> allSongs = songRepository.findAllWithTagsExcluding(usedSongIds);
             return selectSongExcludingArtist(allSongs, excludeArtist);
         }
 
-        System.out.println("🎵 키워드 기반 검색");
         List<Tag> tags = tagRepository.findByNameIn(keywordNames);
         List<Long> tagIds = tags.stream().map(Tag::getId).toList();
 
