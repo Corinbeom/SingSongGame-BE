@@ -96,11 +96,4 @@ public class SongCacheManager {
         // 태그 이름으로 ID 찾기 (이 부분만 DB 조회 필요)
         return new HashSet<>(tagRepository.findIdsByNameIn(keywords));
     }
-
-    // 캐시 갱신 메서드 (필요시)
-    @Scheduled(fixedDelay = 3600000) // 1시간마다
-    public void refreshCache() {
-        log.info("🔄 노래 캐시 갱신 시작");
-        initializeCache();
-    }
 }
